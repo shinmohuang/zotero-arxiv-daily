@@ -1,6 +1,15 @@
 import os
 import sys
 import logging
+
+# Allow running this file directly (e.g. `uv run src/.../main.py`) with a src/ layout.
+# Without this, `import zotero_arxiv_daily...` may resolve to an installed package instead
+# of the local code, causing version mismatches in CI.
+if __package__ in (None, ""):
+    sys.path.insert(
+        0, os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    )
+
 from omegaconf import DictConfig
 import hydra
 from loguru import logger
