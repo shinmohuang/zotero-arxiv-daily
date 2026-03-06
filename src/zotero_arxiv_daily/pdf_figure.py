@@ -5,9 +5,10 @@ from urllib.request import urlretrieve
 from loguru import logger
 import pymupdf
 
-
-CAPTION_PATTERN = re.compile(r"\bfig(?:ure)?\.?\s*\d+\b", flags=re.IGNORECASE)
-SHORT_CAPTION_MAX_CHARS = 180
+CAPTION_PREFIX_PATTERN = re.compile(
+    r"^\s*fig(?:ure)?\.?\s*(?:\d+[a-z]?|[ivxlcdm]+)?(?:\s*[:.\-])?",
+    flags=re.IGNORECASE,
+)
 DEFAULT_FRAMEWORK_KEYWORDS = (
     "framework",
     "architecture",
@@ -17,9 +18,6 @@ DEFAULT_FRAMEWORK_KEYWORDS = (
     "system",
     "approach",
     "model",
-    "workflow",
-    "diagram",
-    "proposed",
 )
 
 
@@ -47,11 +45,11 @@ def _get_text_blocks(page) -> list[tuple[pymupdf.Rect, str]]:
 
 def _is_framework_caption(text: str, keywords: tuple[str, ...]) -> bool:
     lowered = text.lower()
+    if CAPTION_PREFIX_PATTERN.search(lowered) is None:
+        return False
     if not any(keyword in lowered for keyword in keywords):
         return False
-    if CAPTION_PATTERN.search(lowered) is not None:
-        return True
-    return len(text) <= SHORT_CAPTION_MAX_CHARS
+    return True
 
 
 def _has_horizontal_overlap(left: pymupdf.Rect, right: pymupdf.Rect, threshold: float = 0.25) -> bool:
@@ -148,25 +146,29 @@ def _score_caption(text: str, clip: pymupdf.Rect, page_area: float, page_index: 
     lowered = text.lower()
     keyword_hits = sum(keyword in lowered for keyword in keywords)
     score = keyword_hits * 100.0
-    if CAPTION_PATTERN.search(lowered) is not None:
+    if CAPTION_PREFIX_PATTERN.search(lowered) is not None:
         score += 40.0
-    if len(text) <= SHORT_CAPTION_MAX_CHARS:
-        score += 10.0
     score += clip.get_area() / page_area * 20.0
     score -= page_index
     return score
 
 
-def _find_image_candidate(
+def _vertical_gap(rect: pymupdf.Rect, caption_rect: pymupdf.Rect) -> float:
+    if rect.y1 <= caption_rect.y0:
+        return caption_rect.y0 - rect.y1
+    if caption_rect.y1 <= rect.y0:
+        return rect.y0 - caption_rect.y1
+    return 0.0
+
+
+def _find_image_near_caption(
     page,
-    blocks: list[tuple[pymupdf.Rect, str]],
+    caption_rect: pymupdf.Rect,
     page_rect: pymupdf.Rect,
-    page_index: int,
-    keywords: tuple[str, ...],
     min_width: float,
     min_height: float,
     margin: float,
-) -> tuple[float, pymupdf.Rect] | None:
+) -> pymupdf.Rect | None:
     page_area = max(page_rect.get_area(), 1.0)
     best_candidate: tuple[float, pymupdf.Rect] | None = None
     for image in page.get_images(full=True):
@@ -175,29 +177,19 @@ def _find_image_candidate(
         for rect in rects:
             if rect.width < min_width or rect.height < min_height:
                 continue
-
-            nearby_texts = []
-            for block_rect, text in blocks:
-                if not _has_horizontal_overlap(block_rect, rect):
-                    continue
-                distance = min(
-                    abs(block_rect.y0 - rect.y1),
-                    abs(rect.y0 - block_rect.y1),
-                )
-                if distance <= 120:
-                    nearby_texts.append(text.lower())
-
-            nearby_text = " ".join(nearby_texts)
-            keyword_hits = sum(keyword in nearby_text for keyword in keywords)
-            area_ratio = rect.get_area() / page_area
-            if keyword_hits == 0 and area_ratio < 0.12:
+            if not _has_horizontal_overlap(rect, caption_rect):
                 continue
-
-            score = keyword_hits * 80.0 + area_ratio * 30.0 - page_index
+            gap = _vertical_gap(rect, caption_rect)
+            if gap > 160:
+                continue
+            area_ratio = rect.get_area() / page_area
+            score = area_ratio * 100.0 - gap
             clip = _expand_rect(rect, page_rect, margin)
             if best_candidate is None or score > best_candidate[0]:
                 best_candidate = (score, clip)
-    return best_candidate
+    if best_candidate is None:
+        return None
+    return best_candidate[1]
 
 
 def extract_framework_figure(
@@ -239,20 +231,22 @@ def extract_framework_figure(
                 if best_candidate is None or score > best_candidate[0]:
                     best_candidate = (score, page_index, clip)
 
-            if best_candidate is None:
-                image_candidate = _find_image_candidate(
+            for caption_rect, text in blocks:
+                if not _is_framework_caption(text, keywords):
+                    continue
+
+                image_clip = _find_image_near_caption(
                     page,
-                    blocks,
+                    caption_rect,
                     page_rect,
-                    page_index,
-                    keywords,
                     min_width,
                     min_height,
                     caption_margin,
                 )
-                if image_candidate is not None:
-                    score, clip = image_candidate
-                    best_candidate = (score, page_index, clip)
+                if image_clip is not None:
+                    score = _score_caption(text, image_clip, page_area, page_index, keywords) + 20.0
+                    if best_candidate is None or score > best_candidate[0]:
+                        best_candidate = (score, page_index, image_clip)
 
         if best_candidate is None:
             logger.debug(f"No framework figure candidate found in {file_path}")

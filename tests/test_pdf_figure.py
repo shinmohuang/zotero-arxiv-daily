@@ -60,5 +60,26 @@ def test_extract_framework_figure_without_figure_prefix(tmp_path):
 
     image_bytes = extract_framework_figure(str(pdf_path), max_pages=1)
 
+    assert image_bytes is None
+
+
+def test_extract_framework_figure_from_embedded_image_with_caption(tmp_path):
+    pdf_path = tmp_path / "framework-image-caption.pdf"
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    image_rect = pymupdf.Rect(72, 160, 523, 360)
+    page.insert_image(image_rect, stream=PNG_BYTES)
+    page.insert_textbox(
+        pymupdf.Rect(72, 372, 523, 430),
+        "Figure 2: Overview of the framework architecture.",
+        fontsize=12,
+    )
+
+    doc.save(pdf_path)
+    doc.close()
+
+    image_bytes = extract_framework_figure(str(pdf_path), max_pages=1)
+
     assert image_bytes is not None
     assert image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
