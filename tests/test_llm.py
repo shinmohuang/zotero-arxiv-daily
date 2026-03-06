@@ -1,5 +1,6 @@
 import pytest
 import pickle
+from types import SimpleNamespace
 from openai import OpenAI
 from zotero_arxiv_daily.protocol import Paper
 @pytest.fixture
@@ -63,3 +64,45 @@ def test_affiliations(config,paper:Paper):
     openai_client = OpenAI(api_key=config.llm.api.key, base_url=config.llm.api.base_url)
     paper.generate_affiliations(openai_client, config.llm)
     assert paper.affiliations is not None
+
+
+def test_generate_tldr_clamps_max_tokens(config, paper: Paper):
+    calls = []
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="Short TLDR"))]
+            )
+
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(completions=FakeCompletions())
+    )
+    config.llm.generation_kwargs.max_tokens = 16384
+
+    result = paper.generate_tldr(fake_client, config.llm)
+
+    assert result == "Short TLDR"
+    assert calls[0]["max_tokens"] == 8192
+
+
+def test_generate_affiliations_clamps_max_tokens(config, paper: Paper):
+    calls = []
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content='["Pennsylvania State University"]'))]
+            )
+
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(completions=FakeCompletions())
+    )
+    config.llm.generation_kwargs.max_tokens = 16384
+
+    result = paper.generate_affiliations(fake_client, config.llm)
+
+    assert result == ["Pennsylvania State University"]
+    assert calls[0]["max_tokens"] == 8192
