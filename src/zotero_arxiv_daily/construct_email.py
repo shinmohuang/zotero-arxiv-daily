@@ -52,7 +52,21 @@ def get_empty_html():
   """
   return block_template
 
-def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str, affiliations:str=None):
+def get_framework_figure_html(framework_figure_cid:str | None) -> str:
+    if framework_figure_cid is None:
+        return ""
+    return f"""
+    <tr>
+        <td style="padding: 12px 0;">
+            <div style="font-size: 12px; font-weight: bold; color: #555; padding-bottom: 8px;">
+                Framework Figure
+            </div>
+            <img src="cid:{framework_figure_cid}" alt="Framework figure extracted from paper PDF" style="display: block; width: 100%; max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 6px;">
+        </td>
+    </tr>
+"""
+
+def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str, affiliations:str=None, framework_figure_cid:str | None=None):
     block_template = """
     <table border="0" cellpadding="0" cellspacing="0" width="100%" style="font-family: Arial, sans-serif; border: 1px solid #ddd; border-radius: 8px; padding: 16px; background-color: #f9f9f9;">
     <tr>
@@ -77,6 +91,7 @@ def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str, affi
             <strong>TLDR:</strong> {tldr}
         </td>
     </tr>
+    {framework_figure}
 
     <tr>
         <td style="padding: 8px 0;">
@@ -85,7 +100,15 @@ def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str, affi
     </tr>
 </table>
 """
-    return block_template.format(title=title, authors=authors,rate=rate, tldr=tldr, pdf_url=pdf_url, affiliations=affiliations)
+    return block_template.format(
+        title=title,
+        authors=authors,
+        rate=rate,
+        tldr=tldr,
+        pdf_url=pdf_url,
+        affiliations=affiliations,
+        framework_figure=get_framework_figure_html(framework_figure_cid),
+    )
 
 def get_stars(score:float):
     full_star = '<span class="full-star">⭐</span>'
@@ -125,7 +148,17 @@ def render_email(papers:list[Paper]) -> str:
                 affiliations += ', ...'
         else:
             affiliations = 'Unknown Affiliation'
-        parts.append(get_block_html(p.title, authors, rate, p.tldr, p.pdf_url, affiliations))
+        parts.append(
+            get_block_html(
+                p.title,
+                authors,
+                rate,
+                p.tldr,
+                p.pdf_url or p.url,
+                affiliations,
+                p.framework_figure_cid,
+            )
+        )
 
     content = '<br>' + '</br><br>'.join(parts) + '</br>'
     return framework.replace('__CONTENT__', content)

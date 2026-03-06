@@ -3,12 +3,13 @@ from pyzotero import zotero
 from omegaconf import DictConfig
 from .utils import glob_match
 from .retriever import get_retriever_cls
-from .protocol import CorpusPaper
+from .protocol import CorpusPaper, Paper
 import random
 from datetime import datetime
 from .reranker import get_reranker_cls
 from .construct_email import render_email
 from .utils import send_email
+from .pdf_figure import extract_framework_figure_from_url
 from openai import OpenAI
 from tqdm import tqdm
 
@@ -107,6 +108,33 @@ class Executor:
             f"Selected {len(new_corpus)} zotero papers:\n{samples}\n...")
         return new_corpus
 
+    def attach_framework_figures(self, papers: list[Paper]) -> None:
+        figure_config = getattr(self.config.executor, "figure", None)
+        if figure_config is None or not figure_config.enabled:
+            return
+
+        logger.info("Extracting framework figures from PDFs...")
+        for index, paper in enumerate(tqdm(papers)):
+            if paper.pdf_url is None:
+                continue
+            try:
+                figure = extract_framework_figure_from_url(
+                    paper.pdf_url,
+                    max_pages=figure_config.max_pages,
+                    zoom=figure_config.zoom,
+                    min_width=figure_config.min_width,
+                    min_height=figure_config.min_height,
+                    caption_margin=figure_config.caption_margin,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to extract framework figure of {paper.url}: {e}")
+                continue
+
+            if figure is None:
+                continue
+            paper.framework_figure = figure
+            paper.framework_figure_cid = f"framework-figure-{index}"
+
     def run(self):
         corpus = self.fetch_zotero_corpus()
         corpus = self.filter_corpus(corpus)
@@ -135,10 +163,16 @@ class Executor:
             for p in tqdm(reranked_papers):
                 p.generate_tldr(self.openai_client, self.config.llm)
                 p.generate_affiliations(self.openai_client, self.config.llm)
+            self.attach_framework_figures(reranked_papers)
         elif not self.config.executor.send_empty:
             logger.info("No new papers found. No email will be sent.")
             return
         logger.info("Sending email...")
         email_content = render_email(reranked_papers)
-        send_email(self.config, email_content)
+        inline_images = [
+            (paper.framework_figure_cid, paper.framework_figure)
+            for paper in reranked_papers
+            if paper.framework_figure_cid is not None and paper.framework_figure is not None
+        ]
+        send_email(self.config, email_content, inline_images=inline_images)
         logger.info("Email sent successfully")

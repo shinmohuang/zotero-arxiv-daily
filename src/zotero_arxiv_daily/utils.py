@@ -3,6 +3,8 @@ import re
 import glob
 import smtplib
 from email.header import Header
+from email.mime.image import MIMEImage
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import parseaddr, formataddr
 from loguru import logger
@@ -88,21 +90,46 @@ def glob_match(path:str, pattern:str) -> bool:
     re_pattern = glob.translate(pattern,recursive=True)
     return re.match(re_pattern, path) is not None
 
-def send_email(config:DictConfig, html:str):
+def build_email_message(
+    config:DictConfig,
+    html:str,
+    inline_images:list[tuple[str, bytes]] | None = None,
+):
     sender = config.email.sender
     receiver = config.email.receiver
-    password = config.email.sender_password
-    smtp_server = config.email.smtp_server
-    smtp_port = config.email.smtp_port
+
     def _format_addr(s):
         name, addr = parseaddr(s)
         return formataddr((Header(name, 'utf-8').encode(), addr))
 
-    msg = MIMEText(html, 'html', 'utf-8')
+    msg = MIMEMultipart('related')
+    alternative = MIMEMultipart('alternative')
+    alternative.attach(MIMEText(html, 'html', 'utf-8'))
+    msg.attach(alternative)
+
+    for content_id, image_bytes in inline_images or []:
+        image = MIMEImage(image_bytes, _subtype='png')
+        image.add_header('Content-ID', f'<{content_id}>')
+        image.add_header('Content-Disposition', 'inline', filename=f'{content_id}.png')
+        msg.attach(image)
+
     msg['From'] = _format_addr('Github Action <%s>' % sender)
     msg['To'] = _format_addr('You <%s>' % receiver)
     today = datetime.datetime.now().strftime('%Y/%m/%d')
     msg['Subject'] = Header(f'Daily arXiv {today}', 'utf-8').encode()
+    return msg
+
+def send_email(
+    config:DictConfig,
+    html:str,
+    inline_images:list[tuple[str, bytes]] | None = None,
+):
+    sender = config.email.sender
+    password = config.email.sender_password
+    smtp_server = config.email.smtp_server
+    smtp_port = config.email.smtp_port
+    receiver = config.email.receiver
+    msg = build_email_message(config, html, inline_images)
 
     try:
         server = smtplib.SMTP(smtp_server, smtp_port)

@@ -45,5 +45,12 @@ executor:
   send_empty: false # Whether to send an empty email even if no new papers today. Example: true
   max_workers: 4 # Concurrent workers for processing papers. Example: 4
   max_paper_num: 100 # The maximum number of the papers presented in the email. Example: 100
+  figure:
+    enabled: true # Whether to extract a framework-like figure from the paper PDF and embed it into the email. Example: true
+    max_pages: 8 # Only scan the first N pages for framework captions. Example: 8
+    zoom: 2.0 # Rendering zoom for the extracted framework figure preview. Example: 2.0
+    min_width: 160 # Minimum width of the extracted figure region in PDF points. Example: 160
+    min_height: 120 # Minimum height of the extracted figure region in PDF points. Example: 120
+    caption_margin: 12 # Extra margin around detected figure captions in PDF points. Example: 12
   source: ??? # The sources of papers to retrieve. Example: ['arxiv','biorxiv','medrxiv']
   reranker: local # The reranker to use. Example: 'local' or 'api'
