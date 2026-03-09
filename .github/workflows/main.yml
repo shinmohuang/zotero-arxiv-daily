@@ -2,6 +2,8 @@ name: Send emails daily
 on:
   workflow_dispatch:
   schedule:
+    # Keep this schedule definition explicit so a workflow file update
+    # forces GitHub Actions to refresh the registered cron trigger.
     - cron: '0 05 * * *'
 
 jobs:
