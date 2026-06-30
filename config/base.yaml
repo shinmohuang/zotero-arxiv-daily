@@ -1,7 +1,7 @@
 zotero:
   user_id: ??? # User ID of your Zotero account.
   api_key: ??? # An Zotero API key with read access.
-  include_path: null # A glob pattern marking the Zotero collections that should be included. Example: "2026/survey/**"
+  include_path: null # Glob pattern(s) marking the Zotero collections to include. Single: "2026/survey/**". Multiple (match any): ["survey/**", "LLM/**"]. Note: "x/**" matches sub-collections of x but not x itself; add "x" to also include the root.
 
 source:
   arxiv:

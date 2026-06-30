@@ -91,15 +91,16 @@ class Executor:
         ]
 
     def filter_corpus(self, corpus: list[CorpusPaper]) -> list[CorpusPaper]:
-        if not self.config.zotero.include_path:
+        include_path = self.config.zotero.include_path
+        if not include_path:
             return corpus
         new_corpus = []
+        # include_path 可写单个 glob 字符串，也可写一组模式（命中任意一个即收录）。
+        patterns = [include_path] if isinstance(include_path, str) else list(include_path)
         logger.info(
-            f"Selecting zotero papers matching include_path: {self.config.zotero.include_path}")
+            f"Selecting zotero papers matching include_path: {patterns}")
         for c in corpus:
-            match_results = [glob_match(
-                p, self.config.zotero.include_path) for p in c.paths]
-            if any(match_results):
+            if any(glob_match(p, pattern) for p in c.paths for pattern in patterns):
                 new_corpus.append(c)
         samples = random.sample(new_corpus, min(5, len(new_corpus)))
         samples = '\n'.join([c.title + ' - ' + '\n'.join(c.paths)
