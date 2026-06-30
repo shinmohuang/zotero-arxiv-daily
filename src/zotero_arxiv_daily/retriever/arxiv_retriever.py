@@ -30,11 +30,21 @@ class ArxivRetriever(BaseRetriever):
         # Get full information of each paper from arxiv api
         bar = tqdm(total=len(all_paper_ids))
         for i in range(0,len(all_paper_ids),20):
-            search = arxiv.Search(id_list=all_paper_ids[i:i+20])
-            batch = list(client.results(search))
+            batch_ids = all_paper_ids[i:i+20]
+            search = arxiv.Search(id_list=batch_ids)
+            # arXiv API 偶发 406/限流：跳过这一批（最多丢 20 篇）而不是整次任务失败。
+            try:
+                batch = list(client.results(search))
+            except Exception as e:
+                logger.warning(f"Failed to fetch arxiv metadata for a batch of {len(batch_ids)} papers: {e}")
+                bar.update(len(batch_ids))
+                continue
             bar.update(len(batch))
             raw_papers.extend(batch)
         bar.close()
+
+        if all_paper_ids and not raw_papers:
+            raise Exception("Failed to fetch metadata for all arxiv papers (arXiv API may be throttling).")
 
         return raw_papers
 
@@ -62,8 +72,10 @@ def extract_text_from_pdf(paper: ArxivResult) -> str | None:
         if paper.pdf_url is None:
             logger.warning(f"No PDF URL available for {paper.title}")
             return None
-        urlretrieve(paper.pdf_url, path)
+        # 必须把下载也包进 try：urlretrieve 的 HTTPError(404)/ContentTooShortError 携带
+        # 不可 pickle 的文件对象，若逃出进程池会让整批任务崩溃，而不只是这一篇拿不到全文。
         try:
+            urlretrieve(paper.pdf_url, path)
             full_text = extract_markdown_from_pdf(path)
         except Exception as e:
             logger.warning(f"Failed to extract full text of {paper.title} from pdf: {e}")
@@ -77,8 +89,8 @@ def extract_text_from_tar(paper: ArxivResult) -> str | None:
         if source_url is None:
             logger.warning(f"No source URL available for {paper.title}")
             return None
-        urlretrieve(source_url, path)
         try:
+            urlretrieve(source_url, path)
             file_contents = extract_tex_code_from_tar(path, paper.entry_id)
             if "all" not in file_contents:
                 logger.warning(f"Failed to extract full text of {paper.title} from tar: Main tex file not found.")

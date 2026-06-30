@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from omegaconf import DictConfig
 from ..protocol import Paper, RawPaperItem
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import Type
 from loguru import logger
 class BaseRetriever(ABC):
@@ -22,9 +22,19 @@ class BaseRetriever(ABC):
         raw_papers = self._retrieve_raw_papers()
         papers = []
         logger.info("Processing papers...")
+        # 用 submit + 逐个收结果，单篇处理失败只丢这一篇并记日志，不让异常中断整批
+        # （exec_pool.map 会在第一个异常处整体抛出）。
         with ProcessPoolExecutor(max_workers=self.config.executor.max_workers) as exec_pool:
-            papers = list(exec_pool.map(self.convert_to_paper, raw_papers))
-        return [p for p in papers if p is not None]
+            futures = {exec_pool.submit(self.convert_to_paper, rp): rp for rp in raw_papers}
+            for future in as_completed(futures):
+                try:
+                    paper = future.result()
+                except Exception as e:
+                    logger.warning(f"Failed to process a paper: {e}")
+                    continue
+                if paper is not None:
+                    papers.append(paper)
+        return papers
 
 registered_retrievers = {}
 
