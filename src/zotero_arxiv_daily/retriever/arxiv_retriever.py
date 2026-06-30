@@ -53,9 +53,11 @@ class ArxivRetriever(BaseRetriever):
         authors = [a.name for a in raw_paper.authors]
         abstract = raw_paper.summary
         pdf_url = raw_paper.pdf_url
-        full_text = extract_text_from_pdf(raw_paper)
+        # 优先用 LaTeX 源码(tar)：源码是纯文本，比从渲染后的 PDF 抽取更干净；
+        # 拿不到源码（部分论文不提供）再退回 PDF。
+        full_text = extract_text_from_tar(raw_paper)
         if full_text is None:
-            full_text = extract_text_from_tar(raw_paper)
+            full_text = extract_text_from_pdf(raw_paper)
         return Paper(
             source=self.name,
             title=title,
@@ -91,7 +93,7 @@ def extract_text_from_tar(paper: ArxivResult) -> str | None:
             return None
         try:
             urlretrieve(source_url, path)
-            file_contents = extract_tex_code_from_tar(path, paper.entry_id)
+            file_contents = extract_tex_code_from_tar(path, paper.entry_id, paper_title=paper.title)
             if "all" not in file_contents:
                 logger.warning(f"Failed to extract full text of {paper.title} from tar: Main tex file not found.")
                 return None
