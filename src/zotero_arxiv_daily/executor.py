@@ -10,6 +10,10 @@ from .reranker import get_reranker_cls
 from .construct_email import render_email
 from .utils import send_email
 from .pdf_figure import extract_framework_figure_from_url
+from .figure_from_source import (
+    extract_framework_figure_from_source_url,
+    arxiv_source_url,
+)
 from openai import OpenAI
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
@@ -126,24 +130,38 @@ class Executor:
         if figure_config is None or not figure_config.enabled:
             return
 
-        logger.info("Extracting framework figures from PDFs...")
+        logger.info("Extracting framework figures...")
 
         def extract(item: tuple[int, Paper]) -> None:
             index, paper = item
-            if paper.pdf_url is None:
-                return
-            try:
-                figure = extract_framework_figure_from_url(
-                    paper.pdf_url,
-                    max_pages=figure_config.max_pages,
-                    zoom=figure_config.zoom,
-                    min_width=figure_config.min_width,
-                    min_height=figure_config.min_height,
-                    caption_margin=figure_config.caption_margin,
-                )
-            except Exception as e:
-                logger.warning(f"Failed to extract framework figure of {paper.url}: {e}")
-                return
+
+            # 先试从 arXiv 源码包取图注匹配的原图（命中时画质更好）；
+            # 取不到（无源码 / TikZ / EPS 等）再退回从 PDF 渲染区域抠图。
+            figure = None
+            source_url = arxiv_source_url(paper.pdf_url, paper.url)
+            if source_url is not None:
+                try:
+                    figure = extract_framework_figure_from_source_url(
+                        source_url,
+                        title=paper.title,
+                        zoom=figure_config.zoom,
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to extract framework figure of {paper.url} from source: {e}")
+
+            if figure is None and paper.pdf_url is not None:
+                try:
+                    figure = extract_framework_figure_from_url(
+                        paper.pdf_url,
+                        max_pages=figure_config.max_pages,
+                        zoom=figure_config.zoom,
+                        min_width=figure_config.min_width,
+                        min_height=figure_config.min_height,
+                        caption_margin=figure_config.caption_margin,
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to extract framework figure of {paper.url}: {e}")
+                    return
 
             if figure is None:
                 return
