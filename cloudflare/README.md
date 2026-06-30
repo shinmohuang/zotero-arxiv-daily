@@ -65,7 +65,11 @@ npx wrangler secret put ADD_TOKEN   # 自己起一个口令
 https://zotero-add.<你的子域>.workers.dev/add?arxiv=2512.04296&token=a8f3k2
 ```
 
-看到「✅ 已加入 Zotero 待读」，并在 Zotero 待读收藏夹里出现该论文即成功。
+会先看到一个**确认页**，点「确认加入」后才真正入库，出现「✅ 已加入 Zotero 待读」即成功。
+
+> ⚠️ 为什么要确认这一步：邮件客户端/反钓鱼扫描器会**自动预取**邮件里的所有链接(GET)。
+> 如果 GET 就入库，一封邮件被打开就会把**所有**论文都加进 Zotero。所以 Worker 在 GET 上
+> 只回确认页、不入库，真正入库只在你点击确认按钮发出的 **POST** 里执行。
 
 ## 四、接到邮件按钮
 

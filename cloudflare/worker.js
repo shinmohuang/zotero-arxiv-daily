@@ -41,6 +41,14 @@ export default {
     const collection =
       url.searchParams.get("collection") || env.ZOTERO_COLLECTION || "";
 
+    // 关键安全设计：GET 不入库，只回确认页。
+    // 邮件客户端/反钓鱼扫描器会自动预取邮件里的所有链接(GET)，若 GET 就入库，
+    // 一封邮件被打开就会把所有论文都加进 Zotero。真正入库只在用户点击确认页按钮
+    // 发出的 POST 里执行——扫描器不会触发 POST。
+    if (request.method !== "POST") {
+      return confirmPage(arxivId, token, collection);
+    }
+
     try {
       const meta = await fetchArxivMeta(arxivId);
       const item = buildZoteroItem(meta, arxivId, collection);
@@ -55,6 +63,28 @@ export default {
     }
   },
 };
+
+function confirmPage(arxivId, token, collection) {
+  const params = new URLSearchParams({ arxiv: arxivId, token });
+  if (collection) params.set("collection", collection);
+  const action = "/add?" + params.toString();
+  const html = `<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>确认加入 Zotero 待读</title></head>
+<body style="font-family:-apple-system,Arial,sans-serif;background:#f5f5f5;margin:0;padding:48px 16px;">
+<div style="max-width:520px;margin:0 auto;background:#fff;border-radius:12px;padding:28px;box-shadow:0 2px 12px rgba(0,0,0,.08);">
+<h1 style="font-size:20px;color:#333;margin:0 0 12px;">加入 Zotero 待读？</h1>
+<p style="font-size:15px;color:#444;line-height:1.6;margin:0 0 20px;">arXiv: ${escapeHtml(arxivId)}</p>
+<form method="POST" action="${escapeHtml(action)}">
+<button type="submit" style="font-size:16px;font-weight:bold;color:#fff;background:#5bc0de;border:none;border-radius:6px;padding:12px 24px;cursor:pointer;">确认加入</button>
+</form>
+<p style="font-size:12px;color:#999;margin-top:20px;">这一步是为了防止邮件客户端自动预取链接造成误加。</p>
+</div></body></html>`;
+  return new Response(html, {
+    status: 200,
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
+}
 
 async function fetchArxivMeta(arxivId) {
   const res = await fetch(`${ARXIV_API}?id_list=${encodeURIComponent(arxivId)}&max_results=1`);
