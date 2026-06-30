@@ -94,8 +94,10 @@ def extract_text_from_tar(paper: ArxivResult) -> str | None:
         try:
             urlretrieve(source_url, path)
             file_contents = extract_tex_code_from_tar(path, paper.entry_id, paper_title=paper.title)
-            if "all" not in file_contents:
-                logger.warning(f"Failed to extract full text of {paper.title} from tar: Main tex file not found.")
+            # 源码不是 tar / 无 .tex / 找不到主文件时返回 None 或 all=None，属预期情况
+            # （会退回 PDF），用 debug 而非 warning，避免刷屏。
+            if not file_contents or file_contents.get("all") is None:
+                logger.debug(f"No usable tex full text for {paper.title}; falling back to PDF.")
                 return None
             full_text = file_contents["all"]
         except Exception as e:
