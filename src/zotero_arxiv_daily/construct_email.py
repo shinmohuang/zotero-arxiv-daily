@@ -106,7 +106,7 @@ def get_zotero_button_html(add_url: str | None) -> str:
     return (
         f'<a href="{add_url}" target="_blank" '
         'style="display: inline-block; text-decoration: none; font-size: 14px; '
-        'font-weight: bold; color: #fff; background-color: #cc2936; '
+        'font-weight: bold; color: #fff; background-color: #5bc0de; '
         'padding: 8px 16px; border-radius: 4px; margin-left: 8px;" '
         'title="一键把论文加入 Zotero 待读收藏夹">'
         '+ Zotero 待读</a>'
