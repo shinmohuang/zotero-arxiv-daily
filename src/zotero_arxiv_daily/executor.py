@@ -12,6 +12,7 @@ from .utils import send_email
 from .pdf_figure import extract_framework_figure_from_url
 from openai import OpenAI
 from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor
 
 
 class Executor:
@@ -94,9 +95,9 @@ class Executor:
         include_path = self.config.zotero.include_path
         if not include_path:
             return corpus
-        new_corpus = []
         # include_path 可写单个 glob 字符串，也可写一组模式（命中任意一个即收录）。
         patterns = [include_path] if isinstance(include_path, str) else list(include_path)
+        new_corpus = []
         logger.info(
             f"Selecting zotero papers matching include_path: {patterns}")
         for c in corpus:
@@ -109,15 +110,28 @@ class Executor:
             f"Selected {len(new_corpus)} zotero papers:\n{samples}\n...")
         return new_corpus
 
+    def generate_tldr_and_affiliations(self, papers: list[Paper]) -> None:
+        # TLDR 与 affiliations 都是 I/O-bound 的 LLM 调用，逐篇串行是主要耗时来源
+        # （N 篇 × 2 次调用）。用线程池并发，OpenAI 客户端可安全跨线程共享。
+        def enrich(paper: Paper) -> None:
+            paper.generate_tldr(self.openai_client, self.config.llm)
+            paper.generate_affiliations(self.openai_client, self.config.llm)
+
+        max_workers = self.config.executor.max_workers
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            list(tqdm(pool.map(enrich, papers), total=len(papers)))
+
     def attach_framework_figures(self, papers: list[Paper]) -> None:
         figure_config = getattr(self.config.executor, "figure", None)
         if figure_config is None or not figure_config.enabled:
             return
 
         logger.info("Extracting framework figures from PDFs...")
-        for index, paper in enumerate(tqdm(papers)):
+
+        def extract(item: tuple[int, Paper]) -> None:
+            index, paper = item
             if paper.pdf_url is None:
-                continue
+                return
             try:
                 figure = extract_framework_figure_from_url(
                     paper.pdf_url,
@@ -129,12 +143,17 @@ class Executor:
                 )
             except Exception as e:
                 logger.warning(f"Failed to extract framework figure of {paper.url}: {e}")
-                continue
+                return
 
             if figure is None:
-                continue
+                return
             paper.framework_figure = figure
             paper.framework_figure_cid = f"framework-figure-{index}"
+
+        # 每篇都要下载 PDF + 解析，下载是 I/O-bound，并发能显著缩短总时长。
+        max_workers = self.config.executor.max_workers
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            list(tqdm(pool.map(extract, enumerate(papers)), total=len(papers)))
 
     def run(self):
         corpus = self.fetch_zotero_corpus()
@@ -161,9 +180,7 @@ class Executor:
             reranked_papers = reranked_papers[:
                                               self.config.executor.max_paper_num]
             logger.info("Generating TLDR and affiliations...")
-            for p in tqdm(reranked_papers):
-                p.generate_tldr(self.openai_client, self.config.llm)
-                p.generate_affiliations(self.openai_client, self.config.llm)
+            self.generate_tldr_and_affiliations(reranked_papers)
             self.attach_framework_figures(reranked_papers)
         elif not self.config.executor.send_empty:
             logger.info("No new papers found. No email will be sent.")
