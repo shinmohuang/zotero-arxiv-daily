@@ -161,6 +161,68 @@ def _vertical_gap(rect: pymupdf.Rect, caption_rect: pymupdf.Rect) -> float:
     return 0.0
 
 
+def _rects_near(left: pymupdf.Rect, right: pymupdf.Rect, gap: float) -> bool:
+    """两个矩形是否相邻/相交：把 left 向四周扩 gap 后看是否与 right 相交。"""
+    expanded = pymupdf.Rect(left.x0 - gap, left.y0 - gap, left.x1 + gap, left.y1 + gap)
+    return expanded.intersects(right)
+
+
+def _cluster_rects(rects: list[pymupdf.Rect], gap: float) -> list[pymupdf.Rect]:
+    """把彼此相邻的矩形合并成一个外框——矢量框架图由大量小线条/路径拼成，需聚成整图。"""
+    clusters = [pymupdf.Rect(r) for r in rects]
+    changed = True
+    while changed:
+        changed = False
+        merged: list[pymupdf.Rect] = []
+        for rect in clusters:
+            target = next((m for m in merged if _rects_near(m, rect, gap)), None)
+            if target is None:
+                merged.append(pymupdf.Rect(rect))
+            else:
+                target.include_rect(rect)
+                changed = True
+        clusters = merged
+    return clusters
+
+
+def _collect_graphic_rects(
+    page,
+    page_rect: pymupdf.Rect,
+    min_width: float,
+    min_height: float,
+    cluster_gap: float = 24.0,
+) -> list[pymupdf.Rect]:
+    """
+    收集页面上的"图形区域"：内嵌位图 + 矢量绘制，再把碎片聚合成整图的外框。
+
+    参考 paper2md.py 的做法：用 get_image_info() 取位图的精确 bbox，用 get_drawings()
+    捕获矢量框架图（ML 论文的框架/架构图多为矢量，旧逻辑只看 get_images 会漏掉，
+    只能退化成"按文字块空隙裁剪"，裁出的图常含大片留白或裁错位置）。
+    """
+    raw: list[pymupdf.Rect] = []
+
+    for info in page.get_image_info():
+        rect = pymupdf.Rect(info["bbox"])
+        if rect.is_empty or rect.is_infinite:
+            continue
+        raw.append(rect)
+
+    for drawing in page.get_drawings():
+        rect = pymupdf.Rect(drawing["rect"])
+        if rect.is_empty or rect.is_infinite:
+            continue
+        # 极小的线条/标记（分隔线、箭头碎片）单独看没意义，靠聚合并入整图即可
+        if rect.width < 8 and rect.height < 8:
+            continue
+        # 整页背景填充：当成图会把整页框进来，跳过
+        if rect.width > page_rect.width * 0.95 and rect.height > page_rect.height * 0.95:
+            continue
+        raw.append(rect)
+
+    clusters = _cluster_rects(raw, cluster_gap)
+    return [c for c in clusters if c.width >= min_width and c.height >= min_height]
+
+
 def _find_image_near_caption(
     page,
     caption_rect: pymupdf.Rect,
@@ -171,22 +233,17 @@ def _find_image_near_caption(
 ) -> pymupdf.Rect | None:
     page_area = max(page_rect.get_area(), 1.0)
     best_candidate: tuple[float, pymupdf.Rect] | None = None
-    for image in page.get_images(full=True):
-        xref = image[0]
-        rects = page.get_image_rects(xref)
-        for rect in rects:
-            if rect.width < min_width or rect.height < min_height:
-                continue
-            if not _has_horizontal_overlap(rect, caption_rect):
-                continue
-            gap = _vertical_gap(rect, caption_rect)
-            if gap > 160:
-                continue
-            area_ratio = rect.get_area() / page_area
-            score = area_ratio * 100.0 - gap
-            clip = _expand_rect(rect, page_rect, margin)
-            if best_candidate is None or score > best_candidate[0]:
-                best_candidate = (score, clip)
+    for rect in _collect_graphic_rects(page, page_rect, min_width, min_height):
+        if not _has_horizontal_overlap(rect, caption_rect):
+            continue
+        gap = _vertical_gap(rect, caption_rect)
+        if gap > 160:
+            continue
+        area_ratio = rect.get_area() / page_area
+        score = area_ratio * 100.0 - gap
+        clip = _expand_rect(rect, page_rect, margin)
+        if best_candidate is None or score > best_candidate[0]:
+            best_candidate = (score, clip)
     if best_candidate is None:
         return None
     return best_candidate[1]

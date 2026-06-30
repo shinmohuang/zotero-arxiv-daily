@@ -4,7 +4,10 @@ import base64
 
 pymupdf = pytest.importorskip("pymupdf")
 
-from zotero_arxiv_daily.pdf_figure import extract_framework_figure
+from zotero_arxiv_daily.pdf_figure import (
+    extract_framework_figure,
+    _collect_graphic_rects,
+)
 
 
 PNG_BYTES = base64.b64decode(
@@ -37,6 +40,32 @@ def test_extract_framework_figure(tmp_path):
 
     assert image_bytes is not None
     assert image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_vector_fragments_cluster_into_one_region():
+    """矢量框架图常由多个分离方框/箭头拼成，应聚合成一个紧凑外框，
+    而不是退化成按文字块空隙裁剪。"""
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    # 间距 < 聚合阈值（24px）的三个方框，模拟框架图的相邻组件
+    boxes = [
+        pymupdf.Rect(80, 180, 220, 260),
+        pymupdf.Rect(240, 180, 380, 260),
+        pymupdf.Rect(400, 180, 540, 260),
+    ]
+    for box in boxes:
+        page.draw_rect(box, color=(0, 0, 0))
+
+    page_rect = page.rect
+    regions = _collect_graphic_rects(page, page_rect, min_width=160.0, min_height=60.0)
+    doc.close()
+
+    # 三个方框应聚成一个区域，外框紧贴它们的并集（约 80..540 × 180..260）
+    assert len(regions) == 1
+    region = regions[0]
+    assert region.x0 <= 81 and region.x1 >= 539
+    assert region.y0 <= 181 and region.y1 >= 259
+    assert region.height < 200  # 不会把整栏留白都框进来
 
 
 def test_extract_framework_figure_without_figure_prefix(tmp_path):
