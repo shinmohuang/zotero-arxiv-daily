@@ -37,6 +37,23 @@ def test_render_email(papers: list[Paper]):
     assert email_content is not None
     assert "cid:framework-figure-0" in email_content
     assert "Framework Figure" in email_content
+    # 未配置 Worker 端点时不显示一键入库按钮
+    assert "+ Zotero 待读" not in email_content
+
+
+def test_render_email_with_zotero_button(papers: list[Paper]):
+    email_content = render_email(
+        papers,
+        add_endpoint="https://zot.example.workers.dev/add",
+        add_token="secret-token",
+        add_collection="QJT6TCLR",
+    )
+    # 配置后，PDF 按钮旁出现「+ Zotero 待读」，链接指向 Worker 且带 arxiv id / token / collection
+    assert "+ Zotero 待读" in email_content
+    assert "https://zot.example.workers.dev/add?" in email_content
+    assert "arxiv=2512.04296" in email_content
+    assert "token=secret-token" in email_content
+    assert "collection=QJT6TCLR" in email_content
 
 
 def test_build_email_message(config, papers: list[Paper]):

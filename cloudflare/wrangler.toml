@@ -1,0 +1,7 @@
+name = "zotero-add"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+# 待读收藏夹 key 不敏感，作为普通变量；ZOTERO_ID / ZOTERO_KEY / ADD_TOKEN 用 secret 注入。
+[vars]
+ZOTERO_COLLECTION = "QJT6TCLR"

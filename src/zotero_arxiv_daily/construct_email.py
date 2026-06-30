@@ -1,5 +1,9 @@
 from .protocol import Paper
 import math
+import re
+from urllib.parse import urlencode
+
+_ARXIV_ID_PATTERN = re.compile(r"arxiv\.org/abs/([^\s?#]+)", re.IGNORECASE)
 
 
 framework = """
@@ -66,7 +70,50 @@ def get_framework_figure_html(framework_figure_cid:str | None) -> str:
     </tr>
 """
 
-def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str, affiliations:str=None, framework_figure_cid:str | None=None):
+# 邮件里的链接无法直接带着 Zotero API key 发认证 POST，所以「+ Zotero 待读」按钮
+# 指向一个 Cloudflare Worker（见 cloudflare/worker.js）：点击 → Worker 按 arXiv id
+# 抓元数据 → 调 Zotero API 把论文（含标题/作者/摘要）创建到待读收藏夹。
+# 按钮链接形如 https://<worker>/add?arxiv=<id>&token=<token>&collection=<key>
+
+
+def extract_arxiv_id(url: str | None) -> str | None:
+    if not url:
+        return None
+    match = _ARXIV_ID_PATTERN.search(url)
+    return match.group(1) if match else None
+
+
+def build_zotero_add_url(
+    endpoint: str | None,
+    arxiv_id: str | None,
+    token: str | None = None,
+    collection: str | None = None,
+) -> str | None:
+    if not endpoint or not arxiv_id:
+        return None
+    params = {"arxiv": arxiv_id}
+    if token:
+        params["token"] = token
+    if collection:
+        params["collection"] = collection
+    separator = "&" if "?" in endpoint else "?"
+    return f"{endpoint}{separator}{urlencode(params)}"
+
+
+def get_zotero_button_html(add_url: str | None) -> str:
+    if not add_url:
+        return ""
+    return (
+        f'<a href="{add_url}" target="_blank" '
+        'style="display: inline-block; text-decoration: none; font-size: 14px; '
+        'font-weight: bold; color: #fff; background-color: #cc2936; '
+        'padding: 8px 16px; border-radius: 4px; margin-left: 8px;" '
+        'title="一键把论文加入 Zotero 待读收藏夹">'
+        '+ Zotero 待读</a>'
+    )
+
+
+def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str, affiliations:str=None, framework_figure_cid:str | None=None, add_url:str | None=None):
     block_template = """
     <table border="0" cellpadding="0" cellspacing="0" width="100%" style="font-family: Arial, sans-serif; border: 1px solid #ddd; border-radius: 8px; padding: 16px; background-color: #f9f9f9;">
     <tr>
@@ -95,7 +142,7 @@ def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str, affi
 
     <tr>
         <td style="padding: 8px 0;">
-            <a href="{pdf_url}" style="display: inline-block; text-decoration: none; font-size: 14px; font-weight: bold; color: #fff; background-color: #d9534f; padding: 8px 16px; border-radius: 4px;">PDF</a>
+            <a href="{pdf_url}" style="display: inline-block; text-decoration: none; font-size: 14px; font-weight: bold; color: #fff; background-color: #d9534f; padding: 8px 16px; border-radius: 4px;">PDF</a>{zotero_button}
         </td>
     </tr>
 </table>
@@ -108,6 +155,7 @@ def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str, affi
         pdf_url=pdf_url,
         affiliations=affiliations,
         framework_figure=get_framework_figure_html(framework_figure_cid),
+        zotero_button=get_zotero_button_html(add_url),
     )
 
 def get_stars(score:float):
@@ -127,7 +175,12 @@ def get_stars(score:float):
         return '<div class="star-wrapper">'+full_star * full_star_num + half_star * half_star_num + '</div>'
 
 
-def render_email(papers:list[Paper]) -> str:
+def render_email(
+    papers: list[Paper],
+    add_endpoint: str | None = None,
+    add_token: str | None = None,
+    add_collection: str | None = None,
+) -> str:
     parts = []
     if len(papers) == 0 :
         return framework.replace('__CONTENT__', get_empty_html())
@@ -148,6 +201,12 @@ def render_email(papers:list[Paper]) -> str:
                 affiliations += ', ...'
         else:
             affiliations = 'Unknown Affiliation'
+        add_url = build_zotero_add_url(
+            add_endpoint,
+            extract_arxiv_id(p.url),
+            token=add_token,
+            collection=add_collection,
+        )
         parts.append(
             get_block_html(
                 p.title,
@@ -157,6 +216,7 @@ def render_email(papers:list[Paper]) -> str:
                 p.pdf_url or p.url,
                 affiliations,
                 p.framework_figure_cid,
+                add_url=add_url,
             )
         )
 

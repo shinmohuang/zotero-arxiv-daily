@@ -168,7 +168,16 @@ class Executor:
             logger.info("No new papers found. No email will be sent.")
             return
         logger.info("Sending email...")
-        email_content = render_email(reranked_papers)
+        zotero_add = getattr(self.config, "zotero_add", None)
+        if zotero_add is not None and getattr(zotero_add, "enabled", False):
+            email_content = render_email(
+                reranked_papers,
+                add_endpoint=getattr(zotero_add, "endpoint", None),
+                add_token=getattr(zotero_add, "token", None),
+                add_collection=getattr(zotero_add, "collection", None),
+            )
+        else:
+            email_content = render_email(reranked_papers)
         inline_images = [
             (paper.framework_figure_cid, paper.framework_figure)
             for paper in reranked_papers

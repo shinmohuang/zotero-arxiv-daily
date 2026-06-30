@@ -40,6 +40,14 @@ reranker:
     base_url: null # API URL of your embedding model API. Example: https://api.openai.com/v1
     model: null # The model name of the embedding model. Example: text-embedding-3-large
 
+zotero_add:
+  # 邮件里每篇论文 PDF 按钮旁的「+ Zotero 待读」一键入库按钮。
+  # 点击 → Cloudflare Worker（见 cloudflare/worker.js）→ Zotero API 加入待读收藏夹。
+  enabled: false # 是否显示按钮。Example: true
+  endpoint: null # Worker 的 /add 地址。Example: https://zot.yourname.workers.dev/add
+  token: null # 与 Worker 的 ADD_TOKEN 一致的口令，防止链接被乱用。Example: my-secret-token
+  collection: null # 待读收藏夹 key（留空则用 Worker 的默认）。Example: QJT6TCLR
+
 executor:
   debug: false # Whether to use debug mode. Example: true
   send_empty: false # Whether to send an empty email even if no new papers today. Example: true
