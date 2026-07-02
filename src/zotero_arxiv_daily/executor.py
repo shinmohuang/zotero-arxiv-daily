@@ -9,7 +9,7 @@ from datetime import datetime
 from .reranker import get_reranker_cls
 from .construct_email import render_email
 from .utils import send_email
-from .pdf_figure import extract_framework_figure_from_url
+from .pdf_figure import extract_framework_figure_from_url, normalize_figure_bytes
 from .figure_from_source import (
     extract_framework_figure_from_source_url,
     arxiv_source_url,
@@ -164,6 +164,11 @@ class Executor:
                     return
 
             if figure is None:
+                return
+            # 压到合理尺寸，避免原始大图把整封邮件撑爆导致 SMTP 发送时断开
+            figure = normalize_figure_bytes(figure)
+            if len(figure) > 2_000_000:  # 仍过大(>2MB)则放弃这张图，保住邮件能发出
+                logger.warning(f"Framework figure of {paper.url} too large ({len(figure)} bytes), skipping.")
                 return
             paper.framework_figure = figure
             paper.framework_figure_cid = f"framework-figure-{index}"

@@ -5,6 +5,30 @@ from urllib.request import urlretrieve
 from loguru import logger
 import pymupdf
 
+
+def normalize_figure_bytes(data: bytes, max_width: int = 1100) -> bytes:
+    """把首图缩到不超过 max_width 像素宽并重编码为 PNG。
+
+    源码里取到的原图可能有数 MB，逐篇内嵌进邮件会让整封邮件过大，被 QQ 等 SMTP
+    服务器在发送正文时直接断开连接(BrokenPipe)。这里统一压到合理尺寸再入邮件。
+    """
+    if not data:
+        return data
+    try:
+        pixmap = pymupdf.Pixmap(data)
+    except Exception:
+        return data
+    if pixmap.width <= max_width:
+        return data
+    try:
+        with pymupdf.open(stream=data) as doc:
+            page = doc.load_page(0)
+            # 渲染后像素宽 = 页面 point 宽 × zoom，故用 page.rect.width 作分母才能得到 ~max_width 像素
+            zoom = max_width / page.rect.width
+            return page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False).tobytes("png")
+    except Exception:
+        return data
+
 CAPTION_PREFIX_PATTERN = re.compile(
     r"^\s*fig(?:ure)?\.?\s*(?:\d+[a-z]?|[ivxlcdm]+)?(?:\s*[:.\-])?",
     flags=re.IGNORECASE,

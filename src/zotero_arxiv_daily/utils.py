@@ -3,6 +3,7 @@ import re
 import glob
 import math
 import smtplib
+import time
 from collections import Counter
 from email.header import Header
 from email.mime.image import MIMEImage
@@ -161,9 +162,13 @@ def build_email_message(
     msg.attach(alternative)
 
     for content_id, image_bytes in inline_images or []:
-        image = MIMEImage(image_bytes, _subtype='png')
+        # 按魔数判断 jpg/png，避免把 jpg 原图错标成 png
+        is_jpeg = image_bytes[:3] == b'\xff\xd8\xff'
+        subtype = 'jpeg' if is_jpeg else 'png'
+        ext = 'jpg' if is_jpeg else 'png'
+        image = MIMEImage(image_bytes, _subtype=subtype)
         image.add_header('Content-ID', f'<{content_id}>')
-        image.add_header('Content-Disposition', 'inline', filename=f'{content_id}.png')
+        image.add_header('Content-Disposition', 'inline', filename=f'{content_id}.{ext}')
         msg.attach(image)
 
     msg['From'] = _format_addr('Github Action <%s>' % sender)
@@ -183,18 +188,38 @@ def send_email(
     smtp_port = config.email.smtp_port
     receiver = config.email.receiver
     msg = build_email_message(config, html, inline_images)
+    payload = msg.as_string()
 
-    try:
-        server = smtplib.SMTP(smtp_server, smtp_port)
-        server.starttls()
-    except Exception as e:
-        logger.debug(f"Failed to use TLS. {e}\nTry to use SSL.")
+    def _connect():
         try:
-            server = smtplib.SMTP_SSL(smtp_server, smtp_port)
+            server = smtplib.SMTP(smtp_server, smtp_port)
+            server.starttls()
+            return server
+        except Exception as e:
+            logger.debug(f"Failed to use TLS. {e}\nTry to use SSL.")
+        try:
+            return smtplib.SMTP_SSL(smtp_server, smtp_port)
         except Exception as e:
             logger.debug(f"Failed to use SSL. {e}\nTry to use plain text.")
-            server = smtplib.SMTP(smtp_server, smtp_port)
+            return smtplib.SMTP(smtp_server, smtp_port)
 
-    server.login(sender, password)
-    server.sendmail(sender, [receiver], msg.as_string())
-    server.quit()
+    # SMTP 偶发断连(BrokenPipe/Server not connected)，重试几次再放弃
+    last_error = None
+    for attempt in range(3):
+        server = None
+        try:
+            server = _connect()
+            server.login(sender, password)
+            server.sendmail(sender, [receiver], payload)
+            server.quit()
+            return
+        except (smtplib.SMTPException, OSError) as e:
+            last_error = e
+            logger.warning(f"send_email attempt {attempt + 1}/3 failed: {e}")
+            if server is not None:
+                try:
+                    server.close()
+                except Exception:
+                    pass
+            time.sleep(5)
+    raise last_error
